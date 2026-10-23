@@ -3,6 +3,25 @@
 本项目版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)；条目格式参考
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.2.1] - 2026-10-24
+
+### 新增
+
+- `interrupt::SYMBOLS`：(向量符号名, IRQ 编号) 表，由 `typelevel_irqs!`
+  宏与标记类型**同源生成**，是中断符号名单的权威来源。
+- 测试 `build_script_irq_names_match_symbols`：逐项校验 `build.rs` 的
+  IRQS 表（device.x 的 PROVIDE 名单）与 `SYMBOLS` 的**符号名与顺序**
+  完全一致——此前只校验编号，符号名抄错要到应用链接期才暴露。
+- 测试 `symbols_are_dense_and_match_enum_names`：SYMBOLS 编号连续且
+  首尾抽查。
+
+### 变更
+
+- `rt` 向量表单源化：`__INTERRUPTS`、extern 声明、typelevel 标记、
+  `SYMBOLS` 全部改由 `typelevel_irqs!` 宏一次生成（原先是宏外的第四
+  份手抄清单）。`pac::rt::{Vector, __INTERRUPTS}` 路径经重导出保持
+  不变。
+
 ## [0.2.0] - 2026-10-24
 
 ### 新增

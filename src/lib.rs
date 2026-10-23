@@ -2885,6 +2885,46 @@ pub mod interrupt {
                 pub struct $name;
                 unsafe impl Interrupt for $name { const NUMBER: u16 = $num; }
             )*
+
+            /// (向量符号名, IRQ 编号) 表，与上方标记类型同源生成。
+            ///
+            /// 这是中断清单的**唯一权威来源之一**：`tests/layout.rs` 用它
+            /// 交叉校验 `build.rs` 的 IRQS 表（device.x 的 PROVIDE 名单），
+            /// 防止手抄名单漂移导致应用期才暴露的链接错误。
+            pub const SYMBOLS: &[(&str, u16)] = &[ $( (stringify!($name), $num) ),* ];
+
+            /// 向量表生成（feature `rt`，cortex-m-rt `device` 模式）。
+            ///
+            /// `__INTERRUPTS` 位于 `.vector_table.interrupts` 段
+            /// （ORIGIN(FLASH)+0x40，即 IRQ0 槽位）。每个向量符号由
+            /// `device.x` 的 `PROVIDE(sym = DefaultHandler)` 提供默认值；
+            /// 用户（或 embassy-cw32 的 `bind_interrupts!` 宏）用
+            /// `#[no_mangle] unsafe extern "C" fn UART1()` 强符号覆盖。
+            /// extern 声明与数组同样由本宏生成，与标记类型/符号表单源。
+            #[cfg(all(feature = "rt", target_arch = "arm", target_os = "none"))]
+            #[doc(hidden)]
+            pub mod vector {
+                /// 向量表项（Cortex-M ABI：函数指针或 0）
+                #[repr(C)]
+                pub union Vector {
+                    /// 中断服务程序
+                    pub handler: unsafe extern "C" fn(),
+                    /// 保留槽位（填 0）
+                    pub reserved: usize,
+                }
+
+                const IRQ_COUNT: usize = [$( stringify!($name) ),*].len();
+
+                extern "C" {
+                    $( fn $name(); )*
+                }
+
+                #[link_section = ".vector_table.interrupts"]
+                #[no_mangle]
+                pub static __INTERRUPTS: [Vector; IRQ_COUNT] = [
+                    $( Vector { handler: $name } ),*
+                ];
+            }
         };
     }
 
@@ -2958,94 +2998,13 @@ pub mod interrupt {
 
 // ================= 中断向量表（feature `rt`） =================
 
-/// 外设中断向量表（cortex-m-rt `device` 模式）。
+/// 外设中断向量表（cortex-m-rt `device` 模式）的稳定入口。
 ///
-/// `__INTERRUPTS` 位于 `.vector_table.interrupts` 段（ORIGIN(FLASH)+0x40，
-/// 即 IRQ0 槽位）。每个向量符号由 `device.x` 的 `PROVIDE(sym = DefaultHandler)`
-/// 提供默认值；用户（或 embassy-cw32 的 `bind_interrupts!` 宏）用
-/// `#[no_mangle] unsafe extern "C" fn UART1()` 强符号覆盖。
+/// 实际定义由 `interrupt` 模块的 `typelevel_irqs!` 宏单源生成
+/// （见 [`interrupt::vector`]），此处仅为保持 `pac::rt::Vector` 等
+/// 文档化路径稳定。
 #[cfg(all(feature = "rt", target_arch = "arm", target_os = "none"))]
 pub mod rt {
-    /// 向量表项（Cortex-M ABI：函数指针或 0）
-    #[repr(C)]
-    pub union Vector {
-        /// 中断服务程序
-        pub handler: unsafe extern "C" fn(),
-        /// 保留槽位（填 0）
-        pub reserved: usize,
-    }
-
-    extern "C" {
-        fn WDT();
-        fn LVD();
-        fn RTC();
-        fn FLASHRAM();
-        fn RCC();
-        fn GPIOA();
-        fn GPIOB();
-        fn GPIOC();
-        fn GPIOF();
-        fn DMA12();
-        fn DMA34();
-        fn CORDIC();
-        fn ADC1();
-        fn ATIM();
-        fn VC13();
-        fn VC24();
-        fn GTIM1();
-        fn GTIM2();
-        fn GTIM34();
-        fn LPTIM();
-        fn BTIM1();
-        fn BTIM2();
-        fn BTIM3_HALLTIM();
-        fn I2C1();
-        fn I2C2();
-        fn SPI1();
-        fn SPI23();
-        fn UART1();
-        fn UART2();
-        fn UART3();
-        fn ADC2_DAC();
-        fn FAULT();
-    }
-
-    #[link_section = ".vector_table.interrupts"]
-    #[no_mangle]
-    pub static __INTERRUPTS: [Vector; 32] = [
-        Vector { handler: WDT },
-        Vector { handler: LVD },
-        Vector { handler: RTC },
-        Vector { handler: FLASHRAM },
-        Vector { handler: RCC },
-        Vector { handler: GPIOA },
-        Vector { handler: GPIOB },
-        Vector { handler: GPIOC },
-        Vector { handler: GPIOF },
-        Vector { handler: DMA12 },
-        Vector { handler: DMA34 },
-        Vector { handler: CORDIC },
-        Vector { handler: ADC1 },
-        Vector { handler: ATIM },
-        Vector { handler: VC13 },
-        Vector { handler: VC24 },
-        Vector { handler: GTIM1 },
-        Vector { handler: GTIM2 },
-        Vector { handler: GTIM34 },
-        Vector { handler: LPTIM },
-        Vector { handler: BTIM1 },
-        Vector { handler: BTIM2 },
-        Vector {
-            handler: BTIM3_HALLTIM,
-        },
-        Vector { handler: I2C1 },
-        Vector { handler: I2C2 },
-        Vector { handler: SPI1 },
-        Vector { handler: SPI23 },
-        Vector { handler: UART1 },
-        Vector { handler: UART2 },
-        Vector { handler: UART3 },
-        Vector { handler: ADC2_DAC },
-        Vector { handler: FAULT },
-    ];
+    #[allow(unused_imports)]
+    pub use crate::interrupt::vector::{Vector, __INTERRUPTS};
 }

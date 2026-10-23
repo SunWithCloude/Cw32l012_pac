@@ -146,3 +146,53 @@ fn base_addresses_match_memory_map() {
     assert_eq!(RAM_BASE, 0x4002_2400);
     assert_eq!(LVD_BASE, 0x4000_00A4);
 }
+
+#[test]
+fn build_script_irq_names_match_symbols() {
+    // 中断清单在三处维护：Interrupt 枚举、interrupt 模块（含 SYMBOLS）、
+    // build.rs 的 IRQS 表（device.x 的 PROVIDE 名单）。编号一致性已有
+    // 专项测试；本测试校验**符号名与顺序**逐项一致——build.rs 里若把
+    // "UART1" 手滑改成别的，会在应用链接期才炸出难定位的 undefined
+    // reference，这里提前到 CI。
+    let src = include_str!("../build.rs");
+    let mut pairs: Vec<(&str, u16)> = Vec::new();
+    for chunk in src.split("(\"").skip(1) {
+        if let Some((name, rest)) = chunk.split_once("\",") {
+            let digits: String = rest
+                .chars()
+                .skip_while(|c| !c.is_ascii_digit())
+                .take_while(char::is_ascii_digit)
+                .collect();
+            if let Ok(n) = digits.parse::<u16>() {
+                pairs.push((name, n));
+            }
+        }
+    }
+    let symbols = cw32l012_pac::interrupt::SYMBOLS;
+    assert_eq!(
+        pairs.len(),
+        symbols.len(),
+        "build.rs IRQS 与 SYMBOLS 项数不一致"
+    );
+    for (i, (b, sym)) in pairs.iter().zip(symbols.iter()).enumerate() {
+        assert_eq!(
+            b.0, sym.0,
+            "第 {i} 项符号名不一致：build.rs={:?} symbols={:?}",
+            b.0, sym.0
+        );
+        assert_eq!(b.1, sym.1, "第 {i} 项 IRQ 号不一致");
+    }
+}
+
+#[test]
+fn symbols_are_dense_and_match_enum_names() {
+    // SYMBOLS 编号 0..31 连续（向量槽位即数组下标），且首尾抽查。
+    let symbols = cw32l012_pac::interrupt::SYMBOLS;
+    assert_eq!(symbols.len(), 32);
+    for (i, &(_, n)) in symbols.iter().enumerate() {
+        assert_eq!(n as usize, i, "SYMBOLS 第 {i} 项编号不连续");
+    }
+    assert_eq!(symbols[0].0, "WDT");
+    assert_eq!(symbols[27].0, "UART1");
+    assert_eq!(symbols[31].0, "FAULT");
+}
