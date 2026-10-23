@@ -27,16 +27,29 @@
 ## 提供内容
 
 - 存储器映射与全部外设基地址常量（手册表 2-1）
-- 21 个类型化寄存器块：`Sysctrl` / `Gpio` / `Flashctrl` / `Uart` / `Spi` /
+- 26 个类型化寄存器块：`Sysctrl` / `Gpio` / `Flashctrl` / `Uart` / `Spi` /
   `I2c` / `Btim` / `Adc` / `Dac` / `Iwdt` / `Gtim` / `Bgr` / `Lptim` /
-  `Halltim` / `Vc` / `VcRef` / `Opa` / `Atim` / `Wwdt` / `Rtc` / `Dma`
+  `Halltim` / `Vc` / `VcRef` / `Opa` / `Atim` / `Wwdt` / `Rtc` / `Dma` /
+  `Crc` / `Eau` / `Cordic` / `Ramctrl` / `Lvd`
 - `Rw` / `Ro` / `Wo` 寄存器原语（volatile 读 / 写 / 读改写）
-- 各外设位段常量（`sysctrl`、`gpio`、`uart` 等共 21 个模块）
-- `Interrupt` 中断号枚举（IRQ0..31）与 NVIC 操作
-  （`enable` / `disable` / `pend` / `unpend`）
+- 各外设位段常量（`sysctrl`、`gpio`、`uart` 等共 26 个模块）
+- `Interrupt` 中断号枚举（IRQ0..31），带 `ALL` 遍历表、`TryFrom<u8>` 与 NVIC
+  操作（`enable` / `disable` / `pend` / `unpend` / `is_enabled` / `is_pending`）
+- `interrupt` 模块：每个中断一个零尺寸标记类型，供 embassy 风格
+  `bind_interrupts!` 做编译期绑定
 - `Peripherals` 外设单例（`take()` / `steal()`）
 - 编译期布局断言（与官方头文件 `XXX_TypeDef` 尺寸逐项对照），
   另有宿主机回归测试 `tests/layout.rs`
+
+## feature
+
+| feature | 作用 |
+|---------|------|
+| （默认） | 纯寄存器层，零依赖 |
+| `rt` | `cortex-m-rt` device 模式：生成 `__INTERRUPTS` 向量表 + `device.x`（`PROVIDE(<irq> = DefaultHandler)` 弱别名） |
+
+启用 `rt` 后，`memory.x` 与 `-Tlink.x` 仍由应用提供（一般写在
+`.cargo/config.toml`）——库 crate 的链接参数不会传播到最终固件。
 
 ## 使用示例
 
@@ -61,20 +74,28 @@ cw32l012-pac = { path = "../cw32l012-pac" }
 
 ## 中断运行时
 
-本 crate 不提供向量表。两条路：
+本 crate 提供两条互斥的路子，**不要把两者同时链接进一个固件**：
 
-1. 配合 `cw32l012-hal` 的 `runtime` feature（向量表 + `interrupt!` 宏），
-   中断符号名（`UART1_irq` 等）见 `Interrupt` 枚举文档；
-2. 单独使用时自备启动文件与向量表。
+1. **`rt` feature** —— `cortex-m-rt` device 模式。向量符号是 `UART1`、
+   `ADC1` 这样的原名（`__INTERRUPTS` 顺序与手册表 5-1 一致），这是 embassy /
+   标准嵌入式 Rust 的走法；
+2. **`cw32l012-hal` 的 `runtime` feature** —— 自包含向量表，符号是
+   `UART1_irq` 这类带后缀的名字，另带 `interrupt!` 宏。
+
+两条都不用？那就自备启动文件与向量表。
 
 ## 验证状态
 
-- `thumbv6m-none-eabi`：debug + release + `clippy -D warnings` + rustdoc
-  全部零警告；`cargo fmt --check` 干净。
-- 宿主机测试（`cargo test`）断言寄存器块尺寸、基地址、`GPIOx_PDR @ 0x0C`
-  偏移与全部 32 个中断号。
+- `thumbv6m-none-eabi`：debug + release + `clippy -D warnings`（默认与
+  `rt` 两套 feature）+ rustdoc 全部零警告；`cargo fmt --check` 干净。
+- 宿主机测试（`cargo test`，8 项）断言寄存器块尺寸与偏移、基地址、
+  `GPIOx_PDR @ 0x0C`、全部 32 个中断号，以及三份中断清单
+  （枚举 / typelevel 标记 / `build.rs`）互相对齐。
+- `#![forbid(unsafe_op_in_unsafe_fn)]`：`unsafe fn` 内的每次解引用都显式写出。
 - GPIO 输出路径已在 CW32L012 实板验证（寄存器回读符合手册）。
 - 寄存器数据与 `cw32l012-hal` v0.9.1 一致（同一转录来源）。
+
+版本历史见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 发布注意
 

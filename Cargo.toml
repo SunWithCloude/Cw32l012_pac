@@ -1,9 +1,9 @@
 [package]
 name = "cw32l012-pac"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.60"
-description = "Standalone zero-dependency register access crate (PAC) for the CW32L012 Cortex-M0+ MCU (Wuhan Xinyuan / CMSemicon), transcribed from UM V1.4"
+description = "Standalone register access crate (PAC) for the CW32L012 Cortex-M0+ MCU (Wuhan Xinyuan / CMSemicon), transcribed from UM V1.4. Zero dependencies; optional `rt` feature adds cortex-m-rt vector tables"
 categories = ["embedded", "hardware-support", "no-std"]
 keywords = ["cw32", "cw32l012", "pac", "register", "cortex-m"]
 license = "MIT OR Apache-2.0"
@@ -17,7 +17,12 @@ targets = ["thumbv6m-none-eabi"]
 
 [dependencies]
 # 有意保持零依赖：本 crate 是寄存器定义层，只使用 core。
+# 唯一例外：rt feature（外设中断向量表，配合 cortex-m-rt 的 device 模式）。
+cortex-m-rt = { version = "0.7", optional = true, features = ["device"] }
 
 [features]
-# 无 feature。中断运行时（向量表 / interrupt! 宏）由 cw32l012-hal 的
-# `runtime` feature 提供；单独使用本 crate 时请自备向量表。
+# rt：生成外设中断向量表（__INTERRUPTS + device.x PROVIDE 弱别名），
+# 应用以 cortex-m-rt 的 Reset 入口启动（embassy / 标准嵌入式 Rust 工作流）。
+# cw32l012-hal 的自包含 `runtime`（符号名 UART1_irq 等）走的是另一条路径，
+# 两者不要同时链接进一个固件。
+rt = ["dep:cortex-m-rt"]

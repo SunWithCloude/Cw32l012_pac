@@ -26,13 +26,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       # Bare-metal target: any warning is an error.
-      - name: clippy (thumbv6m, -D warnings)
+      - name: clippy (thumbv6m, default features)
         run: cargo clippy --target $TARGET --release -- -D warnings
+
+      - name: clippy (thumbv6m, rt)
+        run: cargo clippy --target $TARGET --release --features rt -- -D warnings
+
+      # Host side: lint the integration tests as well.
+      - name: clippy (host, all targets)
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: build (thumbv6m, release)
         run: cargo build --target $TARGET --release
 
-      # Host-side layout regression tests (no real MMIO touched).
+      - name: build (thumbv6m, release, rt)
+        run: cargo build --target $TARGET --release --features rt
+
+      # Host-side layout / interrupt-table regression tests (no real MMIO touched).
       - name: host tests
         run: cargo test
 

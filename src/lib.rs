@@ -7,14 +7,24 @@
 //! 的 `pac` 模块抽取而成，**零外部依赖、完全自包含**，提供：
 //!
 //! - 存储器映射与全部外设基地址常量（手册表 2-1）
-//! - 类型化寄存器块：`Sysctrl` / `Gpio` / `Flashctrl` / `Uart` / `Spi` / `I2c` /
-//!   `Btim` / `Adc` / `Dac` / `Iwdt` / `Gtim` / `Bgr` / `Lptim` / `Halltim` /
-//!   `Vc` / `VcRef` / `Opa` / `Atim` / `Wwdt` / `Rtc` / `Dma`
+//! - 类型化寄存器块（26 个）：`Sysctrl` / `Gpio` / `Flashctrl` / `Uart` / `Spi` /
+//!   `I2c` / `Btim` / `Adc` / `Dac` / `Iwdt` / `Gtim` / `Bgr` / `Lptim` /
+//!   `Halltim` / `Vc` / `VcRef` / `Opa` / `Atim` / `Wwdt` / `Rtc` / `Dma` /
+//!   `Crc` / `Eau` / `Cordic` / `Ramctrl` / `Lvd`
 //! - `Rw` / `Ro` / `Wo` 寄存器原语（volatile 读 / 写 / 读改写）
 //! - 各外设位段常量（[`sysctrl`]、[`gpio`]、[`uart`] 等模块）
-//! - [`Interrupt`] 中断号枚举（IRQ0..31）与 NVIC 操作
+//! - [`Interrupt`] 中断号枚举（IRQ0..31）与 NVIC 操作，含
+//!   [`ALL`](Interrupt::ALL) 遍历表与 `TryFrom<u8>`
+//! - `interrupt` 模块：typelevel 中断标记（embassy `bind_interrupts!` 用）
 //! - [`Peripherals`] 外设单例（[`take`](Peripherals::take) / [`steal`](Peripherals::steal)）
 //! - 编译期布局静态断言（与官方头文件 `XXX_TypeDef` 尺寸逐项对照）
+//!
+//! ## feature
+//!
+//! | feature | 作用 |
+//! |---------|------|
+//! | （默认） | 纯寄存器层，零依赖 |
+//! | `rt` | 用 `cortex-m-rt` 的 device 模式生成 `__INTERRUPTS` 向量表 + `device.x` 弱别名；应用侧需自备 `memory.x` 与 `-Tlink.x` |
 //!
 //! ## 与 crates.io 上 `cw32l012_pac` 0.1.1 的差异
 //!
@@ -43,6 +53,9 @@
 // 文档以手册位域表为主，统一关掉这类警告。
 #![no_std]
 #![allow(rustdoc::broken_intra_doc_links)]
+// unsafe fn 内的裸指针解引用也要求显式 unsafe 块（Rust 2024 起为默认行为），
+// 提前打开以免将来迁移 edition 时一次性爆出几十处。
+#![forbid(unsafe_op_in_unsafe_fn)]
 
 // ================= 存储器映射常量（表 2-1） =================
 
@@ -78,13 +91,15 @@ pub const GPIOC_BASE: usize = 0x4800_0200;
 /// GPIO 端口 F
 pub const GPIOF_BASE: usize = 0x4800_0300;
 
-// ---- 以下外设 v0.1 暂无 HAL 封装，供原始访问参考 ----
+// ---- 以下外设暂无 HAL 封装，本 crate 只提供寄存器块与位段 ----
 
 /// ADC12 / VC1234 / LVD / OPA12 / DAC（AHB 桥）
 pub const ADC12_BASE: usize = 0x4000_0000;
 /// BGR 基准/温度传感器（与 ADC1 同页，BGR_CR@+0xFC）
 pub const BGR_BASE: usize = 0x4000_0000;
+/// ADC1（实例 1）
 pub const ADC1_BASE: usize = 0x4000_0000;
+/// ADC2（实例 2，实例步进 0x100）
 pub const ADC2_BASE: usize = 0x4000_0100;
 /// DAC（数字模拟转换器，双通道）
 pub const DAC_BASE: usize = 0x4000_00C0;
@@ -92,13 +107,17 @@ pub const DAC_BASE: usize = 0x4000_00C0;
 pub const VC12REF_BASE: usize = 0x4000_0080;
 /// VC3/VC4 电阻分压共享寄存器（VC34_REF，与 VC3 基地址重合）
 pub const VC34REF_BASE: usize = 0x4000_0180;
-/// VC1 / VC2 / VC3 / VC4 比较器（实例步进 0x10，§27.6）
+/// VC1 比较器
 pub const VC1_BASE: usize = 0x4000_0080;
+/// VC2 比较器
 pub const VC2_BASE: usize = 0x4000_0090;
+/// VC3 比较器
 pub const VC3_BASE: usize = 0x4000_0180;
+/// VC4 比较器（VC1..VC4 实例步进 0x10，§27.6）
 pub const VC4_BASE: usize = 0x4000_0190;
-/// OPA1 / OPA2 运算放大器（§29.5）
+/// OPA1 运算放大器
 pub const OPA1_BASE: usize = 0x4000_00B0;
+/// OPA2 运算放大器（§29.5，实例步进 0x08）
 pub const OPA2_BASE: usize = 0x4000_00B8;
 /// SPI2
 pub const SPI2_BASE: usize = 0x4000_0400;
@@ -118,9 +137,11 @@ pub const GTIM4_BASE: usize = 0x4000_2800;
 pub const SPI3_BASE: usize = 0x4000_3400;
 /// RTC
 pub const RTC_BASE: usize = 0x4000_4400;
-/// BTIM1/2/3（基本定时器；相邻实例步进 0x40）
+/// BTIM1（基本定时器）
 pub const BTIM1_BASE: usize = 0x4000_4800;
+/// BTIM2
 pub const BTIM2_BASE: usize = 0x4000_4840;
+/// BTIM3（BTIM1..3 实例步进 0x40）
 pub const BTIM3_BASE: usize = 0x4000_4880;
 /// 兼容别名：BTIM1 基地址
 pub const BTIM123_BASE: usize = BTIM1_BASE;
@@ -142,12 +163,16 @@ pub const DMA_BASE: usize = 0x4002_0000;
 pub const FLASHCTRL_BASE: usize = 0x4002_2000;
 /// RAM 控制
 pub const RAMCTRL_BASE: usize = 0x4002_2400;
+/// 兼容别名：与官方头文件的 `RAM_BASE` 一致
+pub const RAM_BASE: usize = RAMCTRL_BASE;
 /// CRC
 pub const CRC_BASE: usize = 0x4002_3000;
 /// EAU（扩展算术单元）
 pub const EAU_BASE: usize = 0x4002_3200;
 /// CORDIC
 pub const CORDIC_BASE: usize = 0x4002_3400;
+/// LVD（低压检测，UM 第 10 章）
+pub const LVD_BASE: usize = 0x4000_00A4;
 
 // ================= 通用寄存器原语 =================
 
@@ -1941,6 +1966,163 @@ pub mod rtc {
     pub const SSCNT_LOW_MASK: u32 = 0x000F_FFFF;
 }
 
+/// CRC 位定义（§30，UM V1.4）
+///
+/// MODE 取值与厂商 `cw32l012_crc.h` 的 `CRC16_*` 常量一致。
+pub mod crc {
+    // ---- CR (0x00) ----
+    /// 多项式选择（CR[3:0]）
+    pub const MODE_POS: u32 = 0;
+    pub const MODE_MASK: u32 = 0xF;
+
+    /// 0：CRC16-IBM（x16+x15+x2+1，反射）
+    pub const MODE_IBM: u32 = 0x0;
+    /// 1：CRC16-MAXIM
+    pub const MODE_MAXIM: u32 = 0x1;
+    /// 2：CRC16-USB
+    pub const MODE_USB: u32 = 0x2;
+    /// 3：CRC16-MODBUS
+    pub const MODE_MODBUS: u32 = 0x3;
+    /// 4：CRC16-CCITT
+    pub const MODE_CCITT: u32 = 0x4;
+    /// 5：CRC16-CCITT-FALSE
+    pub const MODE_CCITTFALSE: u32 = 0x5;
+    /// 6：CRC16-X25
+    pub const MODE_X25: u32 = 0x6;
+    /// 7：CRC16-XMODEM
+    pub const MODE_XMODEM: u32 = 0x7;
+
+    // ---- DR (0x08) / RESULT (0x0C) ----
+    /// 数据寄存器有效位（DR[7:0]）：每次写 1 字节
+    pub const DR_MASK: u32 = 0xFF;
+    /// 结果有效位（RESULT[15:0]）
+    pub const RESULT_MASK: u32 = 0xFFFF;
+}
+
+/// EAU 位定义（扩展算术单元，UM V1.4）
+pub mod eau {
+    // ---- CSR (0x00) ----
+    /// 运算模式（CSR[1:0]）
+    pub const MODE_POS: u32 = 0;
+    pub const MODE_MASK: u32 = 0x3;
+    /// 0：无符号除法
+    pub const MODE_UNSIGNED_DIV: u32 = 0x0;
+    /// 1：有符号除法
+    pub const MODE_SIGNED_DIV: u32 = 0x1;
+    /// 2：开方
+    pub const MODE_SQRT: u32 = 0x2;
+
+    /// 有符号除法溢出（CSR[2]，只读）
+    pub const OVR: u32 = 1 << 2;
+    /// 除数为零（CSR[3]，只读）
+    pub const ZERO: u32 = 1 << 3;
+    /// 运算进行中（CSR[4]，只读）；启动后轮询此位直到清零
+    pub const BUSY: u32 = 1 << 4;
+}
+
+/// CORDIC 位定义（UM V1.4）
+///
+/// 功能编码与厂商 `cw32l012_cordic.h` 的 `cordic_func_t` 一致。
+pub mod cordic {
+    // ---- CSR (0x00) ----
+    /// 功能选择（CSR[3:0]）
+    pub const FUNC_POS: u32 = 0;
+    pub const FUNC_MASK: u32 = 0xF;
+    /// 0：余弦 cos
+    pub const FUNC_COS: u32 = 0x0;
+    /// 1：正弦 sin
+    pub const FUNC_SIN: u32 = 0x1;
+    /// 2：相位角 atan2(y, x)
+    pub const FUNC_ATAN2: u32 = 0x2;
+    /// 3：模 hypot(x, y)
+    pub const FUNC_HYPOT: u32 = 0x3;
+    /// 4：反正切 atan
+    pub const FUNC_ATAN: u32 = 0x4;
+    /// 5：双曲余弦 cosh
+    pub const FUNC_COSH: u32 = 0x5;
+    /// 6：双曲正弦 sinh
+    pub const FUNC_SINH: u32 = 0x6;
+    /// 7：双曲反正切 atanh
+    pub const FUNC_ATANH: u32 = 0x7;
+    /// 8：自然对数 ln
+    pub const FUNC_LN: u32 = 0x8;
+    /// 9：平方根 sqrt
+    pub const FUNC_SQRT: u32 = 0x9;
+
+    /// 输入缩放（CSR[6:4]）：预移位次数，用于把数据压进 Q1.15/Q1.31 范围
+    pub const SCALE_POS: u32 = 4;
+    pub const SCALE_MASK: u32 = 0x7 << SCALE_POS;
+    /// 数据格式（CSR[7]）：0 = Q1.15，1 = Q1.31
+    pub const FORMAT_Q1_15: u32 = 0 << 7;
+    pub const FORMAT_Q1_31: u32 = 1 << 7;
+
+    /// 迭代次数（CSR[11:8]）：编码 n → 2×(n+1) 次（0000 = 2 次，1111 = 32 次）
+    pub const ITER_POS: u32 = 8;
+    pub const ITER_MASK: u32 = 0xF << ITER_POS;
+    /// 迭代次数编码换算：`ITER_CODE(steps)`，steps 取偶数 2..=32
+    pub const fn iter_code(steps: u32) -> u32 {
+        (steps / 2 - 1) & 0xF
+    }
+
+    /// 中断使能（CSR[13]）
+    pub const IE: u32 = 1 << 13;
+    /// EOC 触发 DMA（CSR[14]）
+    pub const DMAEOC: u32 = 1 << 14;
+    /// BUSY 下降沿触发 DMA（CSR[15]）
+    pub const DMAIDLE: u32 = 1 << 15;
+    /// 运算完成（CSR[16]，只读，写 1 清除）
+    pub const EOC: u32 = 1 << 16;
+    /// 运算进行中（CSR[17]，只读）
+    pub const BUSY: u32 = 1 << 17;
+}
+
+/// RAMCTRL 位定义（SRAM 奇偶校验错误，UM V1.4）
+pub mod ram {
+    /// 奇偶校验错误中断使能（IER[0]）
+    pub const IER_PARITY: u32 = 1 << 0;
+    /// 奇偶校验错误标志（ISR[0]，只读）
+    pub const ISR_PARITY: u32 = 1 << 0;
+    /// 写 1 清除错误标志（ICR[0]）
+    pub const ICR_PARITY: u32 = 1 << 0;
+}
+
+/// LVD 位定义（低压检测，UM V1.4）
+///
+/// 阈值档位与滤波时间的编码见 UM 第 10 章。
+pub mod lvd {
+    // ---- CR0 (0x00) ----
+    /// 使能低压检测
+    pub const CR0_EN: u32 = 1 << 0;
+    /// 检测到低压后的动作选择
+    pub const CR0_ACTION: u32 = 1 << 1;
+    /// 监测源选择
+    pub const CR0_SOURCE: u32 = 1 << 2;
+    /// 阈值档位（CR0[6:4]）
+    pub const CR0_VTH_POS: u32 = 4;
+    pub const CR0_VTH_MASK: u32 = 0x7 << CR0_VTH_POS;
+    /// 滤波时钟选择（CR0[8]）
+    pub const CR0_FLTCLK: u32 = 1 << 8;
+
+    // ---- CR1 (0x04) ----
+    /// 中断使能
+    pub const CR1_IE: u32 = 1 << 0;
+    /// 电平触发
+    pub const CR1_LEVEL: u32 = 1 << 1;
+    /// 上升沿触发
+    pub const CR1_RISE: u32 = 1 << 2;
+    /// 下降沿触发
+    pub const CR1_FALL: u32 = 1 << 3;
+    /// 滤波时间（CR1[7:4]）
+    pub const CR1_FLTTIME_POS: u32 = 4;
+    pub const CR1_FLTTIME_MASK: u32 = 0xF << CR1_FLTTIME_POS;
+
+    // ---- SR (0x08) ----
+    /// 中断标志（只读）
+    pub const SR_INTF: u32 = 1 << 0;
+    /// 当前电压低于阈值（只读）
+    pub const SR_FLTV: u32 = 1 << 1;
+}
+
 // ================= DMA（§8.8） =================
 
 /// DMA 通道寄存器组（每通道 0x20 字节，y = 1..4；通道 1 起始偏移 0x20）
@@ -2113,6 +2295,92 @@ pub mod dma {
     }
 }
 
+// ================= CRC（§30，16 位 CRC 计算单元） =================
+
+/// CRC 计算单元寄存器组
+///
+/// 8 种 16 位标准多项式（IBM / MAXIM / USB / MODBUS / CCITT / CCITTFALSE /
+/// X25 / XMODEM），逐字节写入 [`dr`](Crc::dr)，结果从
+/// [`result`](Crc::result) 读出。多项式选择见 [`crc`] 模块。
+#[repr(C)]
+pub struct Crc {
+    /// 0x00 控制寄存器：MODE[3:0] 选择多项式
+    pub cr: Rw<u32>,
+    _pad04: [u32; 1], // 0x04 保留（官方头文件 RESERVED）
+    /// 0x08 数据寄存器：写入 1 字节待计算数据（仅 DR[7:0] 有效）
+    pub dr: Rw<u32>,
+    /// 0x0C 结果寄存器：RESULT[15:0]，只读
+    pub result: Ro<u32>,
+}
+
+// ================= EAU（扩展算术单元：除法 / 开方） =================
+
+/// 扩展算术单元寄存器组
+///
+/// Cortex-M0+ 没有硬件除法指令，除法与开方走这个外设：置 MODE → 写
+/// DIVIDEND / DIVISOR → 等 BUSY 清零 → 读 QUOTIENT / REMAINDER。
+#[repr(C)]
+pub struct Eau {
+    /// 0x00 控制与状态：MODE[1:0] 可写，OVR / ZERO / BUSY 只读
+    pub csr: Rw<u32>,
+    /// 0x04 被除数（开方模式为待开方数）
+    pub dividend: Rw<u32>,
+    /// 0x08 除数（开方模式忽略）
+    pub divisor: Rw<u32>,
+    /// 0x0C 商（开方模式为结果），只读
+    pub quotient: Ro<u32>,
+    /// 0x10 余数，只读
+    pub remainder: Ro<u32>,
+}
+
+// ================= CORDIC（三角函数 / 双曲 / 对数 / 开方） =================
+
+/// CORDIC 协处理器寄存器组（定点 Q1.15 / Q1.31）
+///
+/// 写完 CSR（功能 + 缩放 + 格式 + 迭代次数）与 X / Y / Z 后，硬件迭代完成置
+/// EOC；结果就地覆盖 X / Y / Z。功能编码见 [`cordic`] 模块。
+#[repr(C)]
+pub struct Cordic {
+    /// 0x00 控制与状态：FUNC[3:0] SCALE[6:4] FORMAT[7] ITER[11:8] …，EOC / BUSY 只读
+    pub csr: Rw<u32>,
+    /// 0x04 数据 X（输入，结果也可能落在这里）
+    pub x: Rw<u32>,
+    /// 0x08 数据 Y
+    pub y: Rw<u32>,
+    /// 0x0C 数据 Z（输入角度 / 输出结果）
+    pub z: Rw<u32>,
+}
+
+// ================= RAMCTRL（SRAM 奇偶校验错误） =================
+
+/// SRAM 控制寄存器组（奇偶校验错误捕获，IRQ3 与 FLASH 共享）
+#[repr(C)]
+pub struct Ramctrl {
+    /// 0x00 中断使能：PARITY
+    pub ier: Rw<u32>,
+    /// 0x04 出错地址，只读
+    pub addr: Ro<u32>,
+    /// 0x08 中断标志：PARITY，只读
+    pub isr: Ro<u32>,
+    /// 0x0C 中断标志清除：写 1 清 PARITY
+    pub icr: Rw<u32>,
+}
+
+// ================= LVD（低压检测，IRQ1） =================
+
+/// 低压检测寄存器组
+///
+/// 阈值档位（VTH）与滤波参数的对应关系见 UM 第 10 章；本层只提供位段。
+#[repr(C)]
+pub struct Lvd {
+    /// 0x00 控制 0：EN / ACTION / SOURCE / VTH[6:4] / FLTCLK
+    pub cr0: Rw<u32>,
+    /// 0x04 控制 1：IE / LEVEL / RISE / FALL / FLTTIME[7:4]
+    pub cr1: Rw<u32>,
+    /// 0x08 状态：INTF / FLTV，只读
+    pub sr: Ro<u32>,
+}
+
 // ================= 布局静态断言 =================
 // 关键外设寄存器块必须与官方 SVD/头文件布局完全一致（编译期保证）：
 // - Gpio：TOG @ 0x60，总大小 0x64（官方 GPIO_TypeDef Size=100）
@@ -2204,6 +2472,26 @@ const _: () = {
         core::mem::size_of::<Rtc>() == 0x48,
         "Rtc 布局错误：SSCNT@0x44 + 4 → 0x48（表 13-6）"
     );
+    assert!(
+        core::mem::size_of::<Crc>() == 0x10,
+        "Crc 布局错误：RESULT@0x0C + 4 → 0x10"
+    );
+    assert!(
+        core::mem::size_of::<Eau>() == 0x14,
+        "Eau 布局错误：REMAINDER@0x10 + 4 → 0x14"
+    );
+    assert!(
+        core::mem::size_of::<Cordic>() == 0x10,
+        "Cordic 布局错误：Z@0x0C + 4 → 0x10"
+    );
+    assert!(
+        core::mem::size_of::<Ramctrl>() == 0x10,
+        "Ramctrl 布局错误：ICR@0x0C + 4 → 0x10"
+    );
+    assert!(
+        core::mem::size_of::<Lvd>() == 0x0C,
+        "Lvd 布局错误：SR@0x08 + 4 → 0x0C"
+    );
 };
 
 // ================= 中断号与 NVIC（手册表 5-1） =================
@@ -2284,6 +2572,71 @@ pub enum Interrupt {
 }
 
 impl Interrupt {
+    /// 全部 32 个中断，按 IRQ 号排列（`ALL[n] as u8 == n`）。
+    ///
+    /// 便于批量操作 NVIC，例如复位后清干净所有使能与挂起位：
+    ///
+    /// ```ignore
+    /// for irq in Interrupt::ALL {
+    ///     irq.disable();
+    ///     irq.unpend();
+    /// }
+    /// ```
+    pub const ALL: [Interrupt; 32] = [
+        Self::Wdt,
+        Self::Lvd,
+        Self::Rtc,
+        Self::FlashRam,
+        Self::Rcc,
+        Self::GpioA,
+        Self::GpioB,
+        Self::GpioC,
+        Self::GpioF,
+        Self::Dma12,
+        Self::Dma34,
+        Self::Cordic,
+        Self::Adc1,
+        Self::Atim,
+        Self::Vc13,
+        Self::Vc24,
+        Self::Gtim1,
+        Self::Gtim2,
+        Self::Gtim34,
+        Self::Lptim,
+        Self::Btim1,
+        Self::Btim2,
+        Self::Btim3Halltim,
+        Self::I2c1,
+        Self::I2c2,
+        Self::Spi1,
+        Self::Spi23,
+        Self::Uart1,
+        Self::Uart2,
+        Self::Uart3,
+        Self::Adc2Dac,
+        Self::Fault,
+    ];
+
+    /// IRQ 编号（0..31）
+    #[must_use]
+    pub const fn number(self) -> u8 {
+        self as u8
+    }
+
+    /// 是否已在 NVIC 中使能（读 ISER）
+    #[must_use]
+    pub fn is_enabled(self) -> bool {
+        let irq = self.number() as u32;
+        unsafe { core::ptr::read_volatile(0xE000_E100 as *const u32) & (1 << irq) != 0 }
+    }
+
+    /// 是否处于挂起状态（读 ISPR）
+    #[must_use]
+    pub fn is_pending(self) -> bool {
+        let irq = self.number() as u32;
+        unsafe { core::ptr::read_volatile(0xE000_E200 as *const u32) & (1 << irq) != 0 }
+    }
+
     /// 在 NVIC 中使能该中断（ISER 写 1 置位）
     pub fn enable(self) {
         let irq = self as u32;
@@ -2313,6 +2666,18 @@ impl Interrupt {
         let irq = self as u32;
         unsafe {
             core::ptr::write_volatile(0xE000_E280 as *mut u32, 1 << irq);
+        }
+    }
+}
+
+impl TryFrom<u8> for Interrupt {
+    /// 越界的 IRQ 编号（原样返回）
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match Self::ALL.get(value as usize) {
+            Some(&irq) => Ok(irq),
+            None => Err(value),
         }
     }
 }
@@ -2399,6 +2764,16 @@ pub struct Peripherals {
     pub dma: &'static Dma,
     /// RTC 实时时钟（BCD 日历 + 闹钟 + 唤醒定时器，§13）
     pub rtc: &'static Rtc,
+    /// CRC 计算单元（16 位，8 种标准多项式，§30）
+    pub crc: &'static Crc,
+    /// EAU 扩展算术单元（硬件除法 / 开方）
+    pub eau: &'static Eau,
+    /// CORDIC 协处理器（三角函数 / 双曲 / 对数 / 开方）
+    pub cordic: &'static Cordic,
+    /// SRAM 奇偶校验错误控制
+    pub ramctrl: &'static Ramctrl,
+    /// LVD 低压检测（IRQ1）
+    pub lvd: &'static Lvd,
 }
 
 impl Peripherals {
@@ -2424,46 +2799,253 @@ impl Peripherals {
     /// # Safety
     /// 调用方需自行保证不出现别名所有权冲突（例如重复初始化同一外设）。
     pub unsafe fn steal() -> Self {
-        Peripherals {
-            sysctrl: &*(SYSCTRL_BASE as *const Sysctrl),
-            flashctrl: &*(FLASHCTRL_BASE as *const Flashctrl),
-            gpioa: &*(GPIOA_BASE as *const Gpio),
-            gpiob: &*(GPIOB_BASE as *const Gpio),
-            gpioc: &*(GPIOC_BASE as *const Gpio),
-            gpiof: &*(GPIOF_BASE as *const Gpio),
-            uart1: &*(UART1_BASE as *const Uart),
-            uart2: &*(UART2_BASE as *const Uart),
-            uart3: &*(UART3_BASE as *const Uart),
-            spi1: &*(SPI1_BASE as *const Spi),
-            spi2: &*(SPI2_BASE as *const Spi),
-            spi3: &*(SPI3_BASE as *const Spi),
-            i2c1: &*(I2C1_BASE as *const I2c),
-            i2c2: &*(I2C2_BASE as *const I2c),
-            btim1: &*(BTIM1_BASE as *const Btim),
-            btim2: &*(BTIM2_BASE as *const Btim),
-            btim3: &*(BTIM3_BASE as *const Btim),
-            adc1: &*(ADC1_BASE as *const Adc),
-            adc2: &*(ADC2_BASE as *const Adc),
-            dac: &*(DAC_BASE as *const Dac),
-            iwdt: &*(IWDT_BASE as *const Iwdt),
-            lptim: &*(LPTIM_BASE as *const Lptim),
-            halltim: &*(HALLTIM_BASE as *const Halltim),
-            vc1: &*(VC1_BASE as *const Vc),
-            vc2: &*(VC2_BASE as *const Vc),
-            vc3: &*(VC3_BASE as *const Vc),
-            vc4: &*(VC4_BASE as *const Vc),
-            vc12ref: &*(VC12REF_BASE as *const VcRef),
-            vc34ref: &*(VC34REF_BASE as *const VcRef),
-            opa1: &*(OPA1_BASE as *const Opa),
-            opa2: &*(OPA2_BASE as *const Opa),
-            wwdt: &*(WWDT_BASE as *const Wwdt),
-            atim: &*(ATIM_BASE as *const Atim),
-            gtim1: &*(GTIM1_BASE as *const Gtim),
-            gtim2: &*(GTIM2_BASE as *const Gtim),
-            gtim3: &*(GTIM3_BASE as *const Gtim),
-            gtim4: &*(GTIM4_BASE as *const Gtim),
-            dma: &*(DMA_BASE as *const Dma),
-            rtc: &*(RTC_BASE as *const Rtc),
+        // SAFETY: 调用方保证不产生别名所有权；以下地址全部来自手册表 2-1。
+        unsafe {
+            Peripherals {
+                sysctrl: &*(SYSCTRL_BASE as *const Sysctrl),
+                flashctrl: &*(FLASHCTRL_BASE as *const Flashctrl),
+                gpioa: &*(GPIOA_BASE as *const Gpio),
+                gpiob: &*(GPIOB_BASE as *const Gpio),
+                gpioc: &*(GPIOC_BASE as *const Gpio),
+                gpiof: &*(GPIOF_BASE as *const Gpio),
+                uart1: &*(UART1_BASE as *const Uart),
+                uart2: &*(UART2_BASE as *const Uart),
+                uart3: &*(UART3_BASE as *const Uart),
+                spi1: &*(SPI1_BASE as *const Spi),
+                spi2: &*(SPI2_BASE as *const Spi),
+                spi3: &*(SPI3_BASE as *const Spi),
+                i2c1: &*(I2C1_BASE as *const I2c),
+                i2c2: &*(I2C2_BASE as *const I2c),
+                btim1: &*(BTIM1_BASE as *const Btim),
+                btim2: &*(BTIM2_BASE as *const Btim),
+                btim3: &*(BTIM3_BASE as *const Btim),
+                adc1: &*(ADC1_BASE as *const Adc),
+                adc2: &*(ADC2_BASE as *const Adc),
+                dac: &*(DAC_BASE as *const Dac),
+                iwdt: &*(IWDT_BASE as *const Iwdt),
+                lptim: &*(LPTIM_BASE as *const Lptim),
+                halltim: &*(HALLTIM_BASE as *const Halltim),
+                vc1: &*(VC1_BASE as *const Vc),
+                vc2: &*(VC2_BASE as *const Vc),
+                vc3: &*(VC3_BASE as *const Vc),
+                vc4: &*(VC4_BASE as *const Vc),
+                vc12ref: &*(VC12REF_BASE as *const VcRef),
+                vc34ref: &*(VC34REF_BASE as *const VcRef),
+                opa1: &*(OPA1_BASE as *const Opa),
+                opa2: &*(OPA2_BASE as *const Opa),
+                wwdt: &*(WWDT_BASE as *const Wwdt),
+                atim: &*(ATIM_BASE as *const Atim),
+                gtim1: &*(GTIM1_BASE as *const Gtim),
+                gtim2: &*(GTIM2_BASE as *const Gtim),
+                gtim3: &*(GTIM3_BASE as *const Gtim),
+                gtim4: &*(GTIM4_BASE as *const Gtim),
+                dma: &*(DMA_BASE as *const Dma),
+                rtc: &*(RTC_BASE as *const Rtc),
+                crc: &*(CRC_BASE as *const Crc),
+                eau: &*(EAU_BASE as *const Eau),
+                cordic: &*(CORDIC_BASE as *const Cordic),
+                ramctrl: &*(RAMCTRL_BASE as *const Ramctrl),
+                lvd: &*(LVD_BASE as *const Lvd),
+            }
         }
     }
+}
+
+// ================= typelevel 中断（供 HAL / embassy 绑定） =================
+
+/// typelevel 中断标记类型。
+///
+/// 每个外设中断一个零尺寸类型（如 [`interrupt::UART1`]），供 embassy 风格的
+/// `bind_interrupts!` 宏做编译期"中断-驱动"绑定；`NUMBER` 与 [`Interrupt`]
+/// 枚举判别值一致（手册表 5-1）。
+pub mod interrupt {
+    /// typelevel 中断号契约。
+    ///
+    /// # Safety
+    ///
+    /// `NUMBER` 必须是该中断在向量表里的真实 IRQ 编号（手册表 5-1）。编号写错
+    /// 会让 `bind_interrupts!` 把中断绑到别的外设上，中断到来时执行错误的处理
+    /// 函数，进而破坏外设状态机——这类错误编译器无法检查。本 crate 内的实现
+    /// 全部由宏从同一张表生成，请勿手写 `impl`。
+    pub unsafe trait Interrupt {
+        /// IRQ 编号（0..31）
+        const NUMBER: u16;
+        /// IRQ 编号（便捷访问）
+        fn number() -> u16 {
+            Self::NUMBER
+        }
+    }
+
+    #[allow(non_camel_case_types)]
+    macro_rules! typelevel_irqs {
+        ($( $(#[$meta:meta])* $name:ident = $num:expr; )*) => {
+            $(
+                $(#[$meta])*
+                #[allow(non_camel_case_types)]
+                pub struct $name;
+                unsafe impl Interrupt for $name { const NUMBER: u16 = $num; }
+            )*
+        };
+    }
+
+    typelevel_irqs! {
+        /// IRQ0：窗口/独立看门狗（向量符号 `WDT`）
+        WDT = 0;
+        /// IRQ1：低压检测（`LVD`）
+        LVD = 1;
+        /// IRQ2：RTC（`RTC`）
+        RTC = 2;
+        /// IRQ3：FLASH/RAM（`FLASHRAM`）
+        FLASHRAM = 3;
+        /// IRQ4：RCC（`RCC`）
+        RCC = 4;
+        /// IRQ5：GPIOA（`GPIOA`）
+        GPIOA = 5;
+        /// IRQ6：GPIOB（`GPIOB`）
+        GPIOB = 6;
+        /// IRQ7：GPIOC（`GPIOC`）
+        GPIOC = 7;
+        /// IRQ8：GPIOF（`GPIOF`）
+        GPIOF = 8;
+        /// IRQ9：DMA 通道 1/2（`DMA12`）
+        DMA12 = 9;
+        /// IRQ10：DMA 通道 3/4（`DMA34`）
+        DMA34 = 10;
+        /// IRQ11：CORDIC（`CORDIC`）
+        CORDIC = 11;
+        /// IRQ12：ADC1（`ADC1`）
+        ADC1 = 12;
+        /// IRQ13：ATIM（`ATIM`）
+        ATIM = 13;
+        /// IRQ14：VC1/3（`VC13`）
+        VC13 = 14;
+        /// IRQ15：VC2/4（`VC24`）
+        VC24 = 15;
+        /// IRQ16：GTIM1（`GTIM1`）
+        GTIM1 = 16;
+        /// IRQ17：GTIM2（`GTIM2`）
+        GTIM2 = 17;
+        /// IRQ18：GTIM3/4（`GTIM34`）
+        GTIM34 = 18;
+        /// IRQ19：LPTIM（`LPTIM`）
+        LPTIM = 19;
+        /// IRQ20：BTIM1（`BTIM1`）
+        BTIM1 = 20;
+        /// IRQ21：BTIM2（`BTIM2`）
+        BTIM2 = 21;
+        /// IRQ22：BTIM3/HALLTIM（`BTIM3_HALLTIM`）
+        BTIM3_HALLTIM = 22;
+        /// IRQ23：I2C1（`I2C1`）
+        I2C1 = 23;
+        /// IRQ24：I2C2（`I2C2`）
+        I2C2 = 24;
+        /// IRQ25：SPI1（`SPI1`）
+        SPI1 = 25;
+        /// IRQ26：SPI2/3（`SPI23`）
+        SPI23 = 26;
+        /// IRQ27：UART1（`UART1`）
+        UART1 = 27;
+        /// IRQ28：UART2（`UART2`）
+        UART2 = 28;
+        /// IRQ29：UART3（`UART3`）
+        UART3 = 29;
+        /// IRQ30：ADC2/DAC（`ADC2_DAC`）
+        ADC2_DAC = 30;
+        /// IRQ31：FAULT（`FAULT`）——官方 SVD 缺失此中断
+        FAULT = 31;
+    }
+}
+
+// ================= 中断向量表（feature `rt`） =================
+
+/// 外设中断向量表（cortex-m-rt `device` 模式）。
+///
+/// `__INTERRUPTS` 位于 `.vector_table.interrupts` 段（ORIGIN(FLASH)+0x40，
+/// 即 IRQ0 槽位）。每个向量符号由 `device.x` 的 `PROVIDE(sym = DefaultHandler)`
+/// 提供默认值；用户（或 embassy-cw32 的 `bind_interrupts!` 宏）用
+/// `#[no_mangle] unsafe extern "C" fn UART1()` 强符号覆盖。
+#[cfg(all(feature = "rt", target_arch = "arm", target_os = "none"))]
+pub mod rt {
+    /// 向量表项（Cortex-M ABI：函数指针或 0）
+    #[repr(C)]
+    pub union Vector {
+        /// 中断服务程序
+        pub handler: unsafe extern "C" fn(),
+        /// 保留槽位（填 0）
+        pub reserved: usize,
+    }
+
+    extern "C" {
+        fn WDT();
+        fn LVD();
+        fn RTC();
+        fn FLASHRAM();
+        fn RCC();
+        fn GPIOA();
+        fn GPIOB();
+        fn GPIOC();
+        fn GPIOF();
+        fn DMA12();
+        fn DMA34();
+        fn CORDIC();
+        fn ADC1();
+        fn ATIM();
+        fn VC13();
+        fn VC24();
+        fn GTIM1();
+        fn GTIM2();
+        fn GTIM34();
+        fn LPTIM();
+        fn BTIM1();
+        fn BTIM2();
+        fn BTIM3_HALLTIM();
+        fn I2C1();
+        fn I2C2();
+        fn SPI1();
+        fn SPI23();
+        fn UART1();
+        fn UART2();
+        fn UART3();
+        fn ADC2_DAC();
+        fn FAULT();
+    }
+
+    #[link_section = ".vector_table.interrupts"]
+    #[no_mangle]
+    pub static __INTERRUPTS: [Vector; 32] = [
+        Vector { handler: WDT },
+        Vector { handler: LVD },
+        Vector { handler: RTC },
+        Vector { handler: FLASHRAM },
+        Vector { handler: RCC },
+        Vector { handler: GPIOA },
+        Vector { handler: GPIOB },
+        Vector { handler: GPIOC },
+        Vector { handler: GPIOF },
+        Vector { handler: DMA12 },
+        Vector { handler: DMA34 },
+        Vector { handler: CORDIC },
+        Vector { handler: ADC1 },
+        Vector { handler: ATIM },
+        Vector { handler: VC13 },
+        Vector { handler: VC24 },
+        Vector { handler: GTIM1 },
+        Vector { handler: GTIM2 },
+        Vector { handler: GTIM34 },
+        Vector { handler: LPTIM },
+        Vector { handler: BTIM1 },
+        Vector { handler: BTIM2 },
+        Vector {
+            handler: BTIM3_HALLTIM,
+        },
+        Vector { handler: I2C1 },
+        Vector { handler: I2C2 },
+        Vector { handler: SPI1 },
+        Vector { handler: SPI23 },
+        Vector { handler: UART1 },
+        Vector { handler: UART2 },
+        Vector { handler: UART3 },
+        Vector { handler: ADC2_DAC },
+        Vector { handler: FAULT },
+    ];
 }
