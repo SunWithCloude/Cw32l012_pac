@@ -94,6 +94,10 @@ Using neither? Provide your own startup code and vector table.
 - Host tests (`cargo test`, 8 cases) assert register block sizes and offsets,
   base addresses, the `GPIOx_PDR @ 0x0C` offset, all 32 interrupt numbers, and
   that the three IRQ tables (enum, typelevel markers, `build.rs`) agree.
+- `rt` feature verified end to end on a CW32L012 board (2026-10-24):
+  `__INTERRUPTS` lands at 0x40 with 128 bytes, the 31 unbound vectors resolve to
+  `DefaultHandler`, a strong `UART1` symbol overrides IRQ27, and the firmware
+  boots into `main`. Recipe: [docs/rt-smoke.md](docs/rt-smoke.md).
 - `#![forbid(unsafe_op_in_unsafe_fn)]` — every dereference inside an `unsafe fn`
   is spelled out.
 - The GPIO output path was verified on a CW32L012 board (register read-back

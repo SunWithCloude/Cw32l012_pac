@@ -91,6 +91,10 @@ cw32l012-pac = { path = "../cw32l012-pac" }
 - 宿主机测试（`cargo test`，8 项）断言寄存器块尺寸与偏移、基地址、
   `GPIOx_PDR @ 0x0C`、全部 32 个中断号，以及三份中断清单
   （枚举 / typelevel 标记 / `build.rs`）互相对齐。
+- `rt` feature 已在 CW32L012 实板上端到端验证（2026-10-24）：
+  `__INTERRUPTS` 落在 0x40、128 字节，31 个未绑定中断全部解析到
+  `DefaultHandler`，强符号 `UART1` 覆盖 IRQ27，固件正常启动进 `main`。
+  复现步骤见 [docs/rt-smoke.md](docs/rt-smoke.md)。
 - `#![forbid(unsafe_op_in_unsafe_fn)]`：`unsafe fn` 内的每次解引用都显式写出。
 - GPIO 输出路径已在 CW32L012 实板验证（寄存器回读符合手册）。
 - 寄存器数据与 `cw32l012-hal` v0.9.1 一致（同一转录来源）。
