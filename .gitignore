@@ -1,0 +1,13 @@
+# 构建产物
+/target
+
+# 固件二进制（由 tools/elf2bin.py 从 elf 生成，不入库）
+*.bin
+*.hex
+*.elf
+*.map
+
+# 编辑器 / 系统垃圾
+.idea/
+.DS_Store
+Thumbs.db

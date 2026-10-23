@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  TARGET: thumbv6m-none-eabi
+
+jobs:
+  build:
+    name: build / test / lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv6m-none-eabi
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Bare-metal target: any warning is an error.
+      - name: clippy (thumbv6m, -D warnings)
+        run: cargo clippy --target $TARGET --release -- -D warnings
+
+      - name: build (thumbv6m, release)
+        run: cargo build --target $TARGET --release
+
+      # Host-side layout regression tests (no real MMIO touched).
+      - name: host tests
+        run: cargo test
+
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Same approach as docs.rs (host target, no deps).
+      - name: cargo doc
+        run: cargo doc --no-deps
+
+      - name: count doc warnings
+        run: cargo doc --no-deps 2>&1 | grep -c "^warning" || true
