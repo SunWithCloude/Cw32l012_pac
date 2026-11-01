@@ -21,7 +21,7 @@ fn register_block_sizes_match_official_headers() {
     assert_eq!(core::mem::size_of::<Wwdt>(), 0x0C);
     assert_eq!(core::mem::size_of::<Dac>(), 0x38);
     assert_eq!(core::mem::size_of::<Iwdt>(), 0x28);
-    assert_eq!(core::mem::size_of::<Gtim>(), 0x68);
+    assert_eq!(core::mem::size_of::<Gtim>(), 0x74);
     assert_eq!(core::mem::size_of::<Sysctrl>(), 0x74);
     assert_eq!(core::mem::size_of::<Flashctrl>(), 0x70);
     assert_eq!(core::mem::size_of::<DmaChannel>(), 0x20);
@@ -41,6 +41,17 @@ fn gpio_pdr_sits_at_0x0c() {
     let base = &g as *const Gpio as usize;
     let pdr = core::ptr::addr_of!(g.pdr) as usize;
     assert_eq!(pdr - base, 0x0C);
+}
+
+#[test]
+fn gtim_icr_sits_at_0x70() {
+    // 0x64(AF2) 与 0x70(ICR) 之间是 0x68/0x6C 两个保留字：pad 少一个
+    // ICR 就会落到 0x68，清标志会写飞到 AF2 之后。官方头文件里对应
+    // GTIM_TypeDef 的 RESERVED2[2] + ICR（Size=116）。
+    let g: Gtim = unsafe { core::mem::zeroed() };
+    let base = &g as *const Gtim as usize;
+    let icr = core::ptr::addr_of!(g.icr) as usize;
+    assert_eq!(icr - base, 0x70);
 }
 
 #[test]

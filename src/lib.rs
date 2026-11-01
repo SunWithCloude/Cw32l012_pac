@@ -639,6 +639,12 @@ pub struct Gtim {
     pub af1: Rw<u32>,
     /// 0x64 复用功能选项寄存器 2
     pub af2: Rw<u32>,
+    /// 0x68..0x6F 保留
+    _pad2: [u32; 2],
+    /// 0x70 中断标志清除寄存器（§16.10.6；R1W0：读对应位恒 1，写 0 清除
+    /// 标志、写 1 无功能。UIF/CC1IF..CC4IF/TIF/CC1OF..CC4OF/IDXF/DIRF/
+    /// IERRF/TERRF，复位 0x00F0_1E5F）
+    pub icr: Rw<u32>,
 }
 
 /// BGR 模块控制寄存器（§25.12.19；与 ADC1 同页，BGR_BASE=0x4000_0000）
@@ -1679,6 +1685,10 @@ pub mod gtim {
     // ---- ISR (0x10) ----
     /// 更新中断标志（ISR[0]）
     pub const ISR_UIF: u32 = 1 << 0;
+
+    // ---- ICR (0x70) ----
+    /// 更新中断标志清除（ICR[0]，R1W0：写 0 清除，写 1 无功能）
+    pub const ICR_UIF: u32 = 1 << 0;
 }
 
 /// ATIM 位定义（§17.10）
@@ -2449,8 +2459,8 @@ const _: () = {
         "Iwdt 布局错误：CNT@0x24 + 4 → 0x28（表 19-4）"
     );
     assert!(
-        core::mem::size_of::<Gtim>() == 0x68,
-        "Gtim 布局错误：AF2@0x64 + 4 → 0x68（表 16-17）"
+        core::mem::size_of::<Gtim>() == 0x74,
+        "Gtim 布局错误：ICR@0x70 + 4 → 0x74（§16.10.6，官方 GTIM_TypeDef Size=116）"
     );
     assert!(
         core::mem::size_of::<Sysctrl>() == 0x74,

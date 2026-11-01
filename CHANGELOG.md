@@ -3,6 +3,16 @@
 本项目版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)；条目格式参考
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+
+### 新增
+
+- `Gtim` 寄存器块补齐 `icr`（GTIMx_ICR @ 0x70，§16.10.6）：R1W0 中断
+  标志清除寄存器（读对应位恒 1，写 0 清除、写 1 无功能；复位
+  `0x00F0_1E5F`），AF2 与 ICR 间的 `0x68..0x6F` 建模为保留。`gtim`
+  常量模块同步补 `ICR_UIF`；布局断言与回归测试改为 0x74（官方
+  `GTIM_TypeDef` Size=116）并新增 `gtim_icr_sits_at_0x70` 偏移测试。
+
 ## [0.2.1] - 2026-10-24
 
 ### 新增
